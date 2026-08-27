@@ -14,6 +14,11 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLException
 
 
 data class MakeoverRequest(
@@ -34,6 +39,22 @@ sealed interface MakeoverResult {
 
 interface MakeoverProvider {
     suspend fun generate(request: MakeoverRequest): MakeoverResult
+}
+
+private fun moodfitHttpClient(): OkHttpClient = OkHttpClient.Builder()
+    .connectTimeout(45, TimeUnit.SECONDS)
+    .writeTimeout(120, TimeUnit.SECONDS)
+    .readTimeout(240, TimeUnit.SECONDS)
+    .callTimeout(300, TimeUnit.SECONDS)
+    .retryOnConnectionFailure(true)
+    .build()
+
+private fun friendlyNetworkError(service: String, error: Exception): String = when (error) {
+    is UnknownHostException -> "$service ist nicht erreichbar. Prüfe Internet, DNS, VPN oder Private DNS und versuche es erneut."
+    is ConnectException -> "Verbindung zu $service konnte nicht hergestellt werden. Prüfe WLAN/Mobilfunk, VPN oder Firewall und versuche es erneut."
+    is SocketTimeoutException -> "Zeitüberschreitung bei $service. Die Bildgenerierung kann länger dauern; bitte erneut versuchen oder das Netzwerk wechseln."
+    is SSLException -> "Sichere HTTPS-Verbindung zu $service ist fehlgeschlagen. Prüfe Datum/Uhrzeit, VPN, Werbeblocker oder Private DNS."
+    else -> error.message ?: "Unbekannter Netzwerkfehler bei $service"
 }
 
 private fun makeoverPrompt(request: MakeoverRequest): String {
@@ -57,7 +78,7 @@ private fun makeoverPrompt(request: MakeoverRequest): String {
 class OpenAiGptImageProvider(
     private val context: Context,
     private val apiKey: String,
-    private val client: OkHttpClient = OkHttpClient()
+    private val client: OkHttpClient = moodfitHttpClient()
 ) : MakeoverProvider {
 
     override suspend fun generate(request: MakeoverRequest): MakeoverResult = withContext(Dispatchers.IO) {
@@ -87,6 +108,7 @@ class OpenAiGptImageProvider(
             val httpRequest = Request.Builder()
                 .url("https://api.openai.com/v1/images/edits")
                 .header("Authorization", "Bearer $apiKey")
+                .header("Accept", "application/json")
                 .post(multipart)
                 .build()
 
@@ -108,7 +130,7 @@ class OpenAiGptImageProvider(
                 MakeoverResult.Success(Uri.fromFile(file).toString())
             }
         } catch (e: Exception) {
-            MakeoverResult.Error(e.message ?: "Unbekannter OpenAI-Fehler")
+            MakeoverResult.Error(friendlyNetworkError("OpenAI", e))
         }
     }
 
@@ -120,11 +142,18 @@ class OpenAiGptImageProvider(
     }
 
     private fun openAiError(code: Int, body: String): String {
-        return try {
-            val message = JSONObject(body).optJSONObject("error")?.optString("message").orEmpty()
-            if (message.isNotBlank()) "OpenAI Fehler $code: $message" else "OpenAI Fehler $code"
+        val apiMessage = try {
+            JSONObject(body).optJSONObject("error")?.optString("message").orEmpty()
         } catch (_: Exception) {
-            "OpenAI Fehler $code: $body"
+            ""
+        }
+
+        return when (code) {
+            401 -> "OpenAI: API-Key wurde nicht akzeptiert. Prüfe den Key und füge ihn erneut ein."
+            403 -> "OpenAI: Zugriff verweigert. Prüfe, ob dein API-Projekt GPT Image verwenden darf bzw. eine Organisationsverifizierung erforderlich ist."
+            429 -> "OpenAI: Limit oder API-Guthaben erreicht. Prüfe Billing, Usage und Rate Limits im OpenAI-API-Konto."
+            in 500..599 -> "OpenAI ist vorübergehend nicht verfügbar (Fehler $code). Bitte später erneut versuchen."
+            else -> if (apiMessage.isNotBlank()) "OpenAI Fehler $code: $apiMessage" else "OpenAI Fehler $code"
         }
     }
 }
@@ -132,7 +161,7 @@ class OpenAiGptImageProvider(
 class FalFlux2Provider(
     private val context: Context,
     private val apiKey: String,
-    private val client: OkHttpClient = OkHttpClient()
+    private val client: OkHttpClient = moodfitHttpClient()
 ) : MakeoverProvider {
 
     override suspend fun generate(request: MakeoverRequest): MakeoverResult = withContext(Dispatchers.IO) {
@@ -184,7 +213,7 @@ class FalFlux2Provider(
                 MakeoverResult.Error("Zeitüberschreitung bei der Bildgenerierung.")
             }
         } catch (e: Exception) {
-            MakeoverResult.Error(e.message ?: "Unbekannter Fehler")
+            MakeoverResult.Error(friendlyNetworkError("fal.ai", e))
         }
     }
 
