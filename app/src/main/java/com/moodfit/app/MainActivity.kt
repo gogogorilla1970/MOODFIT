@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -33,8 +34,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.moodfit.app.ai.FalFlux2Provider
+import com.moodfit.app.ai.MakeoverProvider
 import com.moodfit.app.ai.MakeoverRequest
 import com.moodfit.app.ai.MakeoverResult
+import com.moodfit.app.ai.OpenAiGptImageProvider
 import kotlinx.coroutines.launch
 
 private val Cream = Color(0xFFFFF7FA)
@@ -43,6 +46,11 @@ private val Mauve = Color(0xFFB75C8D)
 private val Rose = Color(0xFFF4C6DC)
 private val SoftRose = Color(0xFFFFEAF3)
 private val Ink = Color(0xFF2E2430)
+
+private enum class AiProvider(val title: String, val subtitle: String) {
+    OPENAI("OpenAI", "GPT Image 2"),
+    FAL("FLUX", "fal.ai FLUX.2")
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -75,7 +83,9 @@ private fun CreateScreen() {
 
     var meUri by remember { mutableStateOf<Uri?>(null) }
     var lookUri by remember { mutableStateOf<Uri?>(null) }
-    var apiKey by remember { mutableStateOf("") }
+    var selectedProvider by remember { mutableStateOf(AiProvider.OPENAI) }
+    var openAiKey by remember { mutableStateOf("") }
+    var falKey by remember { mutableStateOf("") }
     var extraPrompt by remember { mutableStateOf("") }
     var resultUrl by remember { mutableStateOf<String?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
@@ -89,6 +99,7 @@ private fun CreateScreen() {
 
     val pickMe = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { meUri = it }
     val pickLook = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { lookUri = it }
+    val activeKey = if (selectedProvider == AiProvider.OPENAI) openAiKey else falKey
 
     Column(
         Modifier
@@ -96,32 +107,14 @@ private fun CreateScreen() {
             .verticalScroll(rememberScrollState())
             .padding(bottom = 36.dp)
     ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(118.dp)
-                .background(Brush.linearGradient(listOf(Color(0xFFFBE0EC), Color(0xFFF0D8F1), Cream)))
-                .padding(horizontal = 18.dp),
-            contentAlignment = Alignment.CenterStart
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier.size(58.dp).clip(RoundedCornerShape(20.dp)).background(Plum),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Rounded.Favorite, null, tint = Color.White, modifier = Modifier.size(30.dp))
-                }
-                Spacer(Modifier.width(14.dp))
-                Column {
-                    Text("MOODFIT", fontSize = 25.sp, fontWeight = FontWeight.Black, color = Plum)
-                    Text("AI Makeover Studio · v0.2", color = Mauve, fontWeight = FontWeight.SemiBold)
-                }
-            }
-        }
-
+        Header()
         Column(Modifier.padding(horizontal = 18.dp)) {
             Text("Create your new look", fontSize = 28.sp, fontWeight = FontWeight.Black, color = Ink)
-            Text("Dein Gesicht + eine Look-Vorlage werden mit FLUX.2 kombiniert.", color = Ink.copy(alpha = .62f))
+            Text(
+                "Dein Gesicht + eine Look-Vorlage. Wähle die KI, die das Makeover erzeugen soll.",
+                color = Ink.copy(alpha = .62f),
+                lineHeight = 20.sp
+            )
             Spacer(Modifier.height(22.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -130,9 +123,22 @@ private fun CreateScreen() {
             }
 
             Spacer(Modifier.height(20.dp))
+            Text("KI-Provider", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ProviderCard(
+                    Modifier.weight(1f), AiProvider.OPENAI,
+                    selectedProvider == AiProvider.OPENAI
+                ) { selectedProvider = AiProvider.OPENAI }
+                ProviderCard(
+                    Modifier.weight(1f), AiProvider.FAL,
+                    selectedProvider == AiProvider.FAL
+                ) { selectedProvider = AiProvider.FAL }
+            }
+
+            Spacer(Modifier.height(20.dp))
             Text("Aus LOOK übernehmen", fontWeight = FontWeight.Bold, fontSize = 17.sp)
             Spacer(Modifier.height(10.dp))
-
             FeatureRow("Outfit", outfit) { outfit = it }
             FeatureRow("Frisur", hair) { hair = it }
             FeatureRow("Make-up", makeup) { makeup = it }
@@ -145,33 +151,50 @@ private fun CreateScreen() {
                 onValueChange = { extraPrompt = it },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Optionaler Zusatzwunsch") },
-                placeholder = { Text("z. B. candid dating photo, 9:16") },
-                shape = RoundedCornerShape(16.dp)
+                placeholder = { Text("z. B. candid dating photo, natural light, 9:16") },
+                shape = RoundedCornerShape(16.dp),
+                minLines = 2
             )
 
             Spacer(Modifier.height(14.dp))
-            OutlinedTextField(
-                value = apiKey,
-                onValueChange = { apiKey = it.trim() },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("fal.ai API Key") },
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                supportingText = { Text("Wird nicht im GitHub-Projekt gespeichert; in v0.2 nur für diese Sitzung.") }
+            if (selectedProvider == AiProvider.OPENAI) {
+                ApiKeyField(
+                    openAiKey,
+                    { openAiKey = it.trim() },
+                    "OpenAI API Key"
+                )
+            } else {
+                ApiKeyField(
+                    falKey,
+                    { falKey = it.trim() },
+                    "fal.ai API Key"
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if (selectedProvider == AiProvider.OPENAI)
+                    "OpenAI nutzt GPT Image 2 mit zwei Referenzbildern."
+                else
+                    "FLUX nutzt fal.ai FLUX.2 Edit mit zwei Referenzbildern.",
+                fontSize = 12.sp,
+                color = Ink.copy(alpha = .55f)
             )
 
             Spacer(Modifier.height(16.dp))
             Button(
-                enabled = meUri != null && lookUri != null && apiKey.isNotBlank() && !busy,
+                enabled = meUri != null && lookUri != null && activeKey.isNotBlank() && !busy,
                 onClick = {
                     val identity = meUri ?: return@Button
                     val look = lookUri ?: return@Button
                     busy = true
                     resultUrl = null
-                    status = "Makeover wird erzeugt …"
+                    status = "${selectedProvider.title} erzeugt dein Makeover …"
                     scope.launch {
-                        val provider = FalFlux2Provider(context, apiKey)
+                        val provider: MakeoverProvider = when (selectedProvider) {
+                            AiProvider.OPENAI -> OpenAiGptImageProvider(context, openAiKey)
+                            AiProvider.FAL -> FalFlux2Provider(context, falKey)
+                        }
                         when (val result = provider.generate(
                             MakeoverRequest(
                                 identityImage = identity,
@@ -186,7 +209,7 @@ private fun CreateScreen() {
                         )) {
                             is MakeoverResult.Success -> {
                                 resultUrl = result.imageUrl
-                                status = "Makeover fertig."
+                                status = "Makeover mit ${selectedProvider.title} fertig."
                             }
                             is MakeoverResult.Error -> status = result.message
                         }
@@ -209,7 +232,7 @@ private fun CreateScreen() {
             status?.let {
                 Spacer(Modifier.height(14.dp))
                 Card(colors = CardDefaults.cardColors(containerColor = SoftRose), shape = RoundedCornerShape(18.dp)) {
-                    Text(it, Modifier.padding(16.dp), color = Plum)
+                    Text(it, Modifier.padding(16.dp), color = Plum, lineHeight = 20.sp)
                 }
             }
 
@@ -228,6 +251,70 @@ private fun CreateScreen() {
             }
         }
     }
+}
+
+@Composable
+private fun Header() {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(118.dp)
+            .background(Brush.linearGradient(listOf(Color(0xFFFBE0EC), Color(0xFFF0D8F1), Cream)))
+            .padding(horizontal = 18.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(58.dp).clip(RoundedCornerShape(20.dp)).background(Plum),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Rounded.Favorite, null, tint = Color.White, modifier = Modifier.size(30.dp))
+            }
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text("MOODFIT", fontSize = 25.sp, fontWeight = FontWeight.Black, color = Plum)
+                Text("AI Makeover Studio · v0.2", color = Mauve, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderCard(
+    modifier: Modifier,
+    provider: AiProvider,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = modifier.clickable(onClick = onClick),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = if (selected) Rose else Color.White),
+        border = if (selected) BorderStroke(1.5.dp, Plum) else null
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(selected = selected, onClick = onClick)
+                Spacer(Modifier.width(4.dp))
+                Text(provider.title, fontWeight = FontWeight.Bold, color = Plum)
+            }
+            Text(provider.subtitle, fontSize = 12.sp, color = Ink.copy(alpha = .60f))
+        }
+    }
+}
+
+@Composable
+private fun ApiKeyField(value: String, onValueChange: (String) -> Unit, label: String) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(label) },
+        visualTransformation = PasswordVisualTransformation(),
+        singleLine = true,
+        shape = RoundedCornerShape(16.dp),
+        supportingText = { Text("Nur für diese App-Sitzung; nicht im GitHub-Projekt gespeichert.") }
+    )
 }
 
 @Composable
