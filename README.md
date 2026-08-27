@@ -1,27 +1,36 @@
 # MOODFIT — AI Makeover Studio
 
-MOODFIT is an Android concept app for identity-preserving AI makeovers.
+MOODFIT is an Android app for identity-preserving AI makeovers using a **YOU + LOOK** workflow.
 
-## v0.1.0
+## v0.2.0
 
-The first build contains:
+Current development version:
 
-- two-image workflow: **YOU** + **LOOK**
-- Android image selection
-- visual transfer controls for outfit, hair, make-up, pose and background
-- identity / look / creativity sliders
-- optional prompt
-- modular `MakeoverProvider` interface for later AI backends
-- modern rose / mauve / plum visual system
-- GitHub Actions workflow that creates a debug APK
+- choose a **YOU** identity photo
+- choose a **LOOK** reference photo
+- transfer outfit, hair, make-up, pose and/or background
+- add an optional free-text prompt
+- choose between two AI providers:
+  - **OpenAI GPT Image 2** via the official OpenAI Images Edit API
+  - **fal.ai FLUX.2 Edit**
+- display the generated result directly in the app
+- API keys are entered at runtime and are not committed to the repository
 
-## AI backend
+### OpenAI mode
 
-The v0.1.0 UI intentionally ships without a hard-coded third-party API key. A real implementation can plug into `MakeoverProvider`, for example with a self-hosted ComfyUI workflow using FLUX + PuLID/InstantID/IP-Adapter or a specialized virtual try-on model.
+MOODFIT sends the LOOK image first and the YOU identity image second to `POST /v1/images/edits` with `gpt-image-2`. The app requests a portrait output at 1024×1536, medium quality, and saves the returned base64 image temporarily in the Android app cache for display.
+
+### FLUX mode
+
+The alternative provider uses fal.ai FLUX.2 Edit with the same two-reference concept.
+
+## Security note
+
+This is a personal/test build. Runtime key entry is safer than hard-coding a key in source, but a production Android app should normally call a private backend rather than expose a reusable provider API key on the device.
 
 ## Build
 
-GitHub Actions will build the APK automatically.
+GitHub Actions builds the debug APK automatically.
 
 Local build with Android SDK installed:
 
