@@ -1,6 +1,11 @@
 package com.moodfit.app
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -19,6 +24,8 @@ import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Face
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -79,178 +86,92 @@ private fun MoodfitApp() {
 @Composable
 private fun CreateScreen() {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-
     var meUri by remember { mutableStateOf<Uri?>(null) }
     var lookUri by remember { mutableStateOf<Uri?>(null) }
-    var selectedProvider by remember { mutableStateOf(AiProvider.OPENAI) }
-    var openAiKey by remember { mutableStateOf("") }
-    var falKey by remember { mutableStateOf("") }
     var extraPrompt by remember { mutableStateOf("") }
-    var resultUrl by remember { mutableStateOf<String?>(null) }
-    var status by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
-
     var outfit by remember { mutableStateOf(true) }
     var hair by remember { mutableStateOf(true) }
     var makeup by remember { mutableStateOf(true) }
     var pose by remember { mutableStateOf(true) }
     var background by remember { mutableStateOf(false) }
-
     val pickMe = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { meUri = it }
     val pickLook = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { lookUri = it }
-    val activeKey = if (selectedProvider == AiProvider.OPENAI) openAiKey else falKey
+    val prompt = composerPrompt(outfit, hair, makeup, pose, background, extraPrompt)
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(bottom = 36.dp)
-    ) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 36.dp)) {
         Header()
         Column(Modifier.padding(horizontal = 18.dp)) {
-            Text("Create your new look", fontSize = 28.sp, fontWeight = FontWeight.Black, color = Ink)
-            Text(
-                "Dein Gesicht + eine Look-Vorlage. Wähle die KI, die das Makeover erzeugen soll.",
-                color = Ink.copy(alpha = .62f),
-                lineHeight = 20.sp
-            )
-            Spacer(Modifier.height(22.dp))
-
+            Text("Makeover vorbereiten", fontSize = 28.sp, fontWeight = FontWeight.Black, color = Ink)
+            Text("YOU + LOOK auswählen und anschließend mit deinem ChatGPT- oder Gemini-Konto erstellen.", color = Ink.copy(alpha = .62f))
+            Spacer(Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 ImageCard(Modifier.weight(1f), "YOU", "Dein Foto", meUri) { pickMe.launch("image/*") }
                 ImageCard(Modifier.weight(1f), "LOOK", "Deine Vorlage", lookUri) { pickLook.launch("image/*") }
             }
-
-            Spacer(Modifier.height(20.dp))
-            Text("KI-Provider", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ProviderCard(
-                    Modifier.weight(1f), AiProvider.OPENAI,
-                    selectedProvider == AiProvider.OPENAI
-                ) { selectedProvider = AiProvider.OPENAI }
-                ProviderCard(
-                    Modifier.weight(1f), AiProvider.FAL,
-                    selectedProvider == AiProvider.FAL
-                ) { selectedProvider = AiProvider.FAL }
-            }
-
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(18.dp))
             Text("Aus LOOK übernehmen", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-            Spacer(Modifier.height(10.dp))
             FeatureRow("Outfit", outfit) { outfit = it }
             FeatureRow("Frisur", hair) { hair = it }
             FeatureRow("Make-up", makeup) { makeup = it }
             FeatureRow("Pose", pose) { pose = it }
             FeatureRow("Hintergrund", background) { background = it }
-
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(value = extraPrompt, onValueChange = { extraPrompt = it }, modifier = Modifier.fillMaxWidth(),
+                label = { Text("Optionaler Zusatzwunsch") }, placeholder = { Text("z. B. amateur smartphone photo, natural light") },
+                shape = RoundedCornerShape(16.dp), minLines = 2)
             Spacer(Modifier.height(16.dp))
-            OutlinedTextField(
-                value = extraPrompt,
-                onValueChange = { extraPrompt = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Optionaler Zusatzwunsch") },
-                placeholder = { Text("z. B. candid dating photo, natural light, 9:16") },
-                shape = RoundedCornerShape(16.dp),
-                minLines = 2
-            )
-
-            Spacer(Modifier.height(14.dp))
-            if (selectedProvider == AiProvider.OPENAI) {
-                ApiKeyField(
-                    openAiKey,
-                    { openAiKey = it.trim() },
-                    "OpenAI API Key"
-                )
-            } else {
-                ApiKeyField(
-                    falKey,
-                    { falKey = it.trim() },
-                    "fal.ai API Key"
-                )
+            Button(enabled = meUri != null && lookUri != null,
+                onClick = { shareComposer(context, meUri, lookUri, prompt, "com.openai.chatgpt", "ChatGPT") },
+                modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(18.dp)) {
+                Icon(Icons.Rounded.Send, null); Spacer(Modifier.width(8.dp)); Text("In ChatGPT erstellen", fontWeight = FontWeight.Bold)
             }
-
-            Spacer(Modifier.height(8.dp))
-            Text(
-                if (selectedProvider == AiProvider.OPENAI)
-                    "OpenAI nutzt GPT Image 2 mit zwei Referenzbildern."
-                else
-                    "FLUX nutzt fal.ai FLUX.2 Edit mit zwei Referenzbildern.",
-                fontSize = 12.sp,
-                color = Ink.copy(alpha = .55f)
-            )
-
-            Spacer(Modifier.height(16.dp))
-            Button(
-                enabled = meUri != null && lookUri != null && activeKey.isNotBlank() && !busy,
-                onClick = {
-                    val identity = meUri ?: return@Button
-                    val look = lookUri ?: return@Button
-                    busy = true
-                    resultUrl = null
-                    status = "${selectedProvider.title} erzeugt dein Makeover …"
-                    scope.launch {
-                        val provider: MakeoverProvider = when (selectedProvider) {
-                            AiProvider.OPENAI -> OpenAiGptImageProvider(context, openAiKey)
-                            AiProvider.FAL -> FalFlux2Provider(context, falKey)
-                        }
-                        when (val result = provider.generate(
-                            MakeoverRequest(
-                                identityImage = identity,
-                                lookImage = look,
-                                transferOutfit = outfit,
-                                transferHair = hair,
-                                transferMakeup = makeup,
-                                transferPose = pose,
-                                transferBackground = background,
-                                prompt = extraPrompt
-                            )
-                        )) {
-                            is MakeoverResult.Success -> {
-                                resultUrl = result.imageUrl
-                                status = "Makeover mit ${selectedProvider.title} fertig."
-                            }
-                            is MakeoverResult.Error -> status = result.message
-                        }
-                        busy = false
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().height(58.dp),
-                shape = RoundedCornerShape(20.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Plum)
-            ) {
-                if (busy) {
-                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
-                } else {
-                    Icon(Icons.Rounded.AutoAwesome, null)
-                }
-                Spacer(Modifier.width(10.dp))
-                Text(if (busy) "Generating…" else "Create Makeover", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(enabled = meUri != null && lookUri != null,
+                onClick = { shareComposer(context, meUri, lookUri, prompt, "com.google.android.apps.bard", "Gemini") },
+                modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(18.dp)) {
+                Icon(Icons.Rounded.Send, null); Spacer(Modifier.width(8.dp)); Text("In Gemini / Nano Banana erstellen", fontWeight = FontWeight.Bold)
             }
-
-            status?.let {
-                Spacer(Modifier.height(14.dp))
-                Card(colors = CardDefaults.cardColors(containerColor = SoftRose), shape = RoundedCornerShape(18.dp)) {
-                    Text(it, Modifier.padding(16.dp), color = Plum, lineHeight = 20.sp)
-                }
+            TextButton(onClick = { copyComposerPrompt(context, prompt) }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.ContentCopy, null); Spacer(Modifier.width(8.dp)); Text("Prompt kopieren")
             }
-
-            resultUrl?.let { url ->
-                Spacer(Modifier.height(22.dp))
-                Text("Dein Ergebnis", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                Spacer(Modifier.height(10.dp))
-                Card(shape = RoundedCornerShape(26.dp)) {
-                    AsyncImage(
-                        model = url,
-                        contentDescription = "Makeover result",
-                        modifier = Modifier.fillMaxWidth().height(520.dp),
-                        contentScale = ContentScale.Crop
-                    )
-                }
+            Card(colors = CardDefaults.cardColors(containerColor = SoftRose), shape = RoundedCornerShape(18.dp)) {
+                Text("Keine zusätzliche MOODFIT-API nötig. Die Bildgenerierung erfolgt in ChatGPT oder Gemini mit deinem dortigen Konto.", Modifier.padding(15.dp), color = Plum, fontSize = 13.sp)
             }
         }
     }
+}
+
+private fun composerPrompt(outfit:Boolean,hair:Boolean,makeup:Boolean,pose:Boolean,background:Boolean,extra:String):String {
+    val parts = mutableListOf<String>()
+    if (outfit) parts += "outfit and clothing"
+    if (hair) parts += "hairstyle"
+    if (makeup) parts += "make-up"
+    if (pose) parts += "pose and body position"
+    if (background) parts += "background and environment"
+    val transfer = if (parts.isEmpty()) "overall styling" else parts.joinToString(", ")
+    return "Use the two attached reference images for a realistic makeover. IMAGE 1 (YOU) is the identity reference: preserve the adult person's recognizable identity, age, facial proportions, face shape, eyes, nose, mouth, skin texture and natural anatomy. IMAGE 2 (LOOK) is the styling reference. Transfer only: " + transfer + ". Do not blend the two identities. The result must clearly remain the person from IMAGE 1, styled according to IMAGE 2. Keep believable proportions, hands, lighting and photographic detail. No text or watermark. " + extra.trim()
+}
+
+private fun shareComposer(context:Context,you:Uri?,look:Uri?,prompt:String,pkg:String,label:String) {
+    if (you == null || look == null) return
+    val streams = arrayListOf(you, look)
+    val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+        type = "image/*"; putParcelableArrayListExtra(Intent.EXTRA_STREAM, streams); putExtra(Intent.EXTRA_TEXT, prompt)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); setPackage(pkg)
+    }
+    try { context.startActivity(intent) } catch (_:Exception) {
+        val fallback = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = "image/*"; putParcelableArrayListExtra(Intent.EXTRA_STREAM, streams); putExtra(Intent.EXTRA_TEXT, prompt)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(fallback, "Mit " + label + " öffnen"))
+    }
+}
+
+private fun copyComposerPrompt(context:Context,prompt:String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("MOODFIT Prompt", prompt))
+    Toast.makeText(context, "Prompt kopiert", Toast.LENGTH_SHORT).show()
 }
 
 @Composable
@@ -273,7 +194,7 @@ private fun Header() {
             Spacer(Modifier.width(14.dp))
             Column {
                 Text("MOODFIT", fontSize = 25.sp, fontWeight = FontWeight.Black, color = Plum)
-                Text("AI Makeover Studio · v0.2", color = Mauve, fontWeight = FontWeight.SemiBold)
+                Text("Makeover Composer · v0.3", color = Mauve, fontWeight = FontWeight.SemiBold)
             }
         }
     }
