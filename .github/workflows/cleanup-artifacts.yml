@@ -1,0 +1,77 @@
+name: Clean old build artifacts
+
+on:
+  push:
+    paths:
+      - '.github/workflows/cleanup-artifacts.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Remove artifacts older than 14 days, keeping two per name
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from collections import defaultdict
+          from datetime import datetime, timedelta, timezone
+
+          base = "https://api.github.com/repos/" + os.environ["GH_REPO"]
+          headers = {
+              "Authorization": "Bearer " + os.environ["GH_TOKEN"],
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "Geri-artifact-cleanup",
+          }
+
+          def api(path, method="GET"):
+              req = urllib.request.Request(base + path, headers=headers, method=method)
+              with urllib.request.urlopen(req, timeout=45) as response:
+                  body = response.read()
+                  return json.loads(body) if body else None
+
+          artifacts = []
+          for page in range(1, 51):
+              data = api("/actions/artifacts?per_page=100&page=" + str(page))
+              batch = data["artifacts"]
+              artifacts.extend(batch)
+              if len(batch) < 100:
+                  break
+          else:
+              raise RuntimeError("More than 5000 artifacts; stopped to avoid partial cleanup")
+
+          cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+          kept = defaultdict(int)
+          removed = 0
+          released = 0
+          for artifact in sorted(artifacts, key=lambda x: x["created_at"], reverse=True):
+              name = artifact["name"]
+              if name == "github-pages":
+                  continue
+              kept[name] += 1
+              if kept[name] <= 2:
+                  continue
+              created = datetime.fromisoformat(artifact["created_at"].replace("Z", "+00:00"))
+              if created >= cutoff:
+                  continue
+              api("/actions/artifacts/" + str(artifact["id"]), method="DELETE")
+              released += artifact.get("size_in_bytes", 0)
+              removed += 1
+              print("Deleted older artifact:", name, artifact["id"])
+
+          print("Scanned", len(artifacts), "artifacts. Deleted", removed,
+                "old artifacts (", round(released / 1024 / 1024, 2),
+                "MiB). Newest two per name were preserved.")
+          PY
